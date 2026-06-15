@@ -2,7 +2,7 @@
 
 Ask questions about any PDF — answers grounded in your document, not hallucinated.
 
-**Stack:** Spring Boot 3 · Spring AI · Gemini API · pgvector · Redis · Docker
+**Stack:** Spring Boot 3.5 · Spring AI 1.0 · Gemini API · pgvector · Redis · Docker
 
 ---
 
@@ -18,10 +18,10 @@ PDFBox (extract text)
 Chunker (500 chars, 50 overlap)
     │
     ▼
-Spring AI → Gemini Embeddings (text-embedding-004)
+Spring AI → Gemini Embeddings (gemini-embedding-001, 3072-dim)
     │
     ▼
-pgvector (store 768-dim vectors)
+pgvector (store & index vectors)
 
 
 Query
@@ -35,10 +35,10 @@ Spring AI → Gemini Embeddings (embed question)
 pgvector similarity search (cosine, top-5 chunks)
     │
     ▼
-Gemini 1.5 Flash (question + context → answer)
+Gemini 3.5 Flash (question + context → grounded answer)
     │
     ▼
-Redis (cache answer)
+Redis (cache answer for 1 hour)
     │
     ▼
 Response
@@ -48,26 +48,45 @@ Response
 
 ## Setup
 
-### 1. Prerequisites
-- Java 21
+### Prerequisites
+- Java 21+
 - Maven
 - Docker Desktop
 
-### 2. Start infrastructure
+### 1. Start infrastructure
 ```bash
 docker-compose up -d
 ```
 
-### 3. Set environment variable
+This starts:
+- PostgreSQL with pgvector extension on port 5432
+- Redis on port 6379
+
+### 2. Create vector table
 ```bash
-export GOOGLE_PROJECT_ID=your-gcp-project-id
+docker exec -it rag-postgres psql -U postgres -d ragdb -c "
+  CREATE EXTENSION IF NOT EXISTS vector;
+  CREATE TABLE IF NOT EXISTS vector_store (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    content text,
+    metadata json,
+    embedding vector(3072)
+  );"
 ```
-> Get this from Google Cloud Console. Enable Vertex AI API and Gemini API.
+
+### 3. Set your Gemini API key
+Get a free API key from [Google AI Studio](https://aistudio.google.com).
+
+```bash
+export GEMINI_API_KEY=your-api-key-here
+```
 
 ### 4. Run the app
 ```bash
 mvn spring-boot:run
 ```
+
+App starts on `http://localhost:8080`
 
 ---
 
@@ -82,9 +101,10 @@ curl -X POST http://localhost:8080/api/documents/upload \
 Response:
 ```json
 {
+  "success": true,
   "message": "Document ingested successfully",
   "fileName": "your-document.pdf",
-  "chunksStored": 42
+  "chunksStored": 12
 }
 ```
 
@@ -98,21 +118,28 @@ curl -X POST http://localhost:8080/api/query \
 Response:
 ```json
 {
+  "success": true,
   "answer": "Based on the document, the main conclusion is..."
 }
+```
+
+### Health check
+```bash
+curl http://localhost:8080/api/health
 ```
 
 ---
 
 ## Key concepts demonstrated
 
-| Concept | Where |
-|---------|-------|
+| Concept | Implementation |
+|---------|---------------|
 | RAG pipeline | `DocumentService` + `QueryService` |
-| Vector embeddings | Spring AI auto-embeds via Gemini |
-| Semantic search | `VectorStore.similaritySearch()` |
-| Redis caching | `@Cacheable` on `QueryService.answer()` |
-| PDF parsing | Apache PDFBox in `DocumentService` |
-| Sliding-window chunking | `chunkText()` method |
-| Grounded prompting | `buildPrompt()` in `QueryService` |
+| Vector embeddings | Spring AI + Gemini `gemini-embedding-001` |
+| Semantic search | `VectorStore.similaritySearch()` with cosine distance |
+| Redis caching | `@Cacheable` on `QueryService.answer()` — skips LLM on repeat queries |
+| PDF parsing | Apache PDFBox 3.x (`Loader.loadPDF()`) |
+| Sliding-window chunking | 500 char chunks, 50 char overlap |
+| Grounded prompting | Context-only prompt in `buildPrompt()` prevents hallucination |
+| OpenAI-compatible endpoint | Gemini served via `generativelanguage.googleapis.com/v1beta/openai` |
 
