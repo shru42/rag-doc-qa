@@ -116,8 +116,3 @@ Response:
 | Sliding-window chunking | `chunkText()` method |
 | Grounded prompting | `buildPrompt()` in `QueryService` |
 
----
-
-## Resume bullet point
-
-> Built a RAG-based Document Q&A system using Spring Boot, Spring AI, and Gemini API — PDF ingestion pipeline with sliding-window chunking, pgvector semantic search, and Redis response caching. Deployed with Docker Compose.
